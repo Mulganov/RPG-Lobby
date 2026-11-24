@@ -2,6 +2,7 @@ package com.mgames.minecraft.rpg.lobby;
 
 import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
@@ -11,7 +12,6 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
-import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -42,14 +42,14 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
     private static final NamespacedKey SESSION_COOKIE = new NamespacedKey("rpg_lobby", "session");
     private static final NamespacedKey TICKET_COOKIE = new NamespacedKey("rpg_lobby", "ticket");
     private static final int SPAWN_Y = 65;
+    private static final int MAX_MENU_SIZE = 54;
+    private static final int PAGE_SIZE = 45;
 
     private final Map<UUID, Session> sessions = new HashMap<>();
-    private final List<Mode> modes = new ArrayList<>();
     private LobbyApi api;
 
     @Override
     public void onEnable(){
-        saveDefaultConfig();
         try{
             api = new LobbyApi();
         }catch (IllegalArgumentException exception){
@@ -57,8 +57,6 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
             Bukkit.shutdown();
             return;
         }
-
-        loadModes();
         Bukkit.getPluginManager().registerEvents(this, this);
     }
 
@@ -169,27 +167,49 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
             return;
         }
         Session session = sessions.get(player.getUniqueId());
-        if (session == null || session.menu != event.getView().getTopInventory()){
+        if (session == null || session.menu == null || session.menu.inventory() != event.getView().getTopInventory()){
             return;
         }
 
         event.setCancelled(true);
+        Menu menu = session.menu;
         int slot = event.getRawSlot();
-        if (session.busy || session.token == null || slot < 0 || slot >= modes.size()){
+        if (session.busy || session.token == null || slot < 0 || slot >= menu.inventory().getSize()){
             return;
         }
 
-        Mode mode = modes.get(slot);
-        complete(player, session, api.ticket(player, session.token, mode.id()), response -> {
-            if (response != null && response.ticket() != null){
+        if (menu.modes().size() > MAX_MENU_SIZE && slot >= PAGE_SIZE){
+            int page = menu.page();
+            if (slot == PAGE_SIZE && page > 0){
+                changePage(player, session, menu, page - 1);
+            }else if (slot == MAX_MENU_SIZE - 1 && (page + 1) * PAGE_SIZE < menu.modes().size()){
+                changePage(player, session, menu, page + 1);
+            }
+            return;
+        }
+
+        int index = menu.page() * PAGE_SIZE + slot;
+        if (index >= menu.modes().size()){
+            return;
+        }
+
+        LobbyApi.Mode mode = menu.modes().get(index);
+        if (!mode.canJoin()){
+            return;
+        }
+
+        complete(player, session, api.ticket(player, session.token, mode.serverId()), response -> {
+            if (response != null && response.ticket() != null && response.host() != null
+                    && !response.host().isBlank() && response.port() > 0 && response.port() <= 65535){
                 player.storeCookie(TICKET_COOKIE, response.ticket().getBytes(StandardCharsets.US_ASCII));
-                player.transfer(mode.host(), mode.port());
+                player.transfer(response.host(), response.port());
             }else if (response != null && "invalid_session".equals(response.error())){
-                session.token = null;
-                player.closeInventory();
-                promptLogin(player);
+                endSession(player, session);
             }else{
-                player.sendMessage("Не удалось открыть " + mode.label() + ". Попробуй ещё раз.");
+                player.sendMessage("Сейчас не удалось войти в " + mode.name() + ".");
+                if (player.getOpenInventory().getTopInventory() == menu.inventory()){
+                    openModes(player, session);
+                }
             }
         });
     }
@@ -197,7 +217,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
     @EventHandler
     public void onMenuDrag(InventoryDragEvent event){
         Session session = sessions.get(event.getWhoClicked().getUniqueId());
-        if (session != null && session.menu == event.getView().getTopInventory()){
+        if (session != null && session.menu != null && session.menu.inventory() == event.getView().getTopInventory()){
             event.setCancelled(true);
         }
     }
@@ -276,46 +296,103 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
     }
 
     private void openModes(Player player, Session session){
-        if (modes.isEmpty()){
-            player.sendMessage("Доступные режимы появятся здесь после настройки сервера.");
-            return;
+        complete(player, session, api.modes(player, session.token), response -> {
+            if (response != null && response.modes() != null){
+                if (response.modes().isEmpty()){
+                    closeModes(player, session);
+                    player.sendMessage("Список режимов пока пуст.");
+                }else{
+                    showModes(player, session, response.modes(), 0);
+                }
+            }else if (response != null && "invalid_session".equals(response.error())){
+                endSession(player, session);
+            }else{
+                player.sendMessage("Не удалось загрузить режимы. Попробуй /modes чуть позже.");
+            }
+        });
+    }
+
+    private void showModes(Player player, Session session, List<LobbyApi.Mode> modes, int page){
+        boolean paged = modes.size() > MAX_MENU_SIZE;
+        int size = paged ? MAX_MENU_SIZE : ((modes.size() + 8) / 9) * 9;
+        int first = page * PAGE_SIZE;
+        int end = paged ? Math.min(first + PAGE_SIZE, modes.size()) : modes.size();
+        Inventory menu = Bukkit.createInventory(null, size, Component.text("Игровые режимы"));
+        for (int index = first; index < end; index++){
+            menu.setItem(index - first, modeIcon(modes.get(index)));
         }
 
-        int size = ((modes.size() + 8) / 9) * 9;
-        Inventory menu = Bukkit.createInventory(null, size, Component.text("Игровые режимы"));
-        for (int slot = 0; slot < modes.size(); slot++){
-            Mode mode = modes.get(slot);
-            ItemStack icon = new ItemStack(mode.icon());
-            icon.editMeta(meta -> meta.displayName(Component.text(mode.label())));
-            menu.setItem(slot, icon);
+        if (page > 0){
+            ItemStack previous = new ItemStack(Material.ARROW);
+            previous.editMeta(meta -> meta.displayName(Component.text("Предыдущая страница")));
+            menu.setItem(PAGE_SIZE, previous);
         }
-        session.menu = menu;
+        if (end < modes.size()){
+            ItemStack next = new ItemStack(Material.ARROW);
+            next.editMeta(meta -> meta.displayName(Component.text("Следующая страница")));
+            menu.setItem(MAX_MENU_SIZE - 1, next);
+        }
+
+        session.menu = new Menu(menu, modes, page);
         player.openInventory(menu);
     }
 
-    private void loadModes(){
-        ConfigurationSection section = getConfig().getConfigurationSection("modes");
-        if (section == null){
-            return;
+    private void changePage(Player player, Session session, Menu menu, int page){
+        onPlayer(player, session, () -> {
+            if (!session.busy && session.menu == menu && player.getOpenInventory().getTopInventory() == menu.inventory()){
+                showModes(player, session, menu.modes(), page);
+            }
+        });
+    }
+
+    private ItemStack modeIcon(LobbyApi.Mode mode){
+        Component environment = switch (mode.environment()){
+            case "dev" -> Component.text("В разработке", NamedTextColor.YELLOW);
+            case "test" -> Component.text("Сервер тестируется", NamedTextColor.AQUA);
+            case "prod" -> Component.text("Активный режим", NamedTextColor.GREEN);
+            case null, default -> Component.text("Статус неизвестен", NamedTextColor.GRAY);
+        };
+        List<Component> lore = new ArrayList<>();
+        if (mode.serverName() != null && !mode.serverName().equals(mode.name())){
+            lore.add(Component.text(mode.serverName(), NamedTextColor.GRAY));
+        }
+        lore.add(environment);
+
+        if (!mode.online()){
+            lore.add(Component.text("Офлайн", NamedTextColor.RED));
+        }else if (mode.onlinePlayersKnown()){
+            String count = Integer.toString(mode.onlinePlayers());
+            if (mode.maxPlayers() > 0){
+                count += " / " + mode.maxPlayers();
+            }
+            lore.add(Component.text("Онлайн · " + count, NamedTextColor.GREEN));
+        }else{
+            lore.add(Component.text("Онлайн", NamedTextColor.GREEN));
         }
 
-        for (String id: section.getKeys(false)){
-            ConfigurationSection settings = section.getConfigurationSection(id);
-            if (settings == null || modes.size() >= 54 || !id.matches("[A-Za-z0-9._-]{1,64}")){
-                continue;
-            }
+        if (mode.online() && !mode.canJoin()){
+            lore.add(Component.text("Вход недоступен", NamedTextColor.GRAY));
+        }
 
-            String host = settings.getString("host", "").trim();
-            int port = settings.getInt("port", 25565);
-            if (host.isEmpty() || port < 1 || port > 65535){
-                continue;
-            }
+        ItemStack icon = new ItemStack(mode.canJoin() ? Material.COMPASS : Material.GRAY_DYE);
+        icon.editMeta(meta -> {
+            meta.displayName(Component.text(mode.name()));
+            meta.lore(lore);
+        });
+        return icon;
+    }
 
-            Material icon = Material.matchMaterial(settings.getString("icon", ""));
-            if (icon == null || !icon.isItem() || icon.isAir()){
-                icon = Material.COMPASS;
-            }
-            modes.add(new Mode(id, settings.getString("label", id), host, port, icon));
+    private void endSession(Player player, Session session){
+        closeModes(player, session);
+        session.token = null;
+        promptLogin(player);
+    }
+
+    private void closeModes(Player player, Session session){
+        Menu menu = session.menu;
+        session.menu = null;
+        if (menu != null && player.getOpenInventory().getTopInventory() == menu.inventory()){
+            player.closeInventory();
         }
     }
 
@@ -332,13 +409,13 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         private String password;
         private Input input = Input.NONE;
         private boolean busy;
-        private Inventory menu;
+        private Menu menu;
     }
 
     private enum Input {
         NONE, LOGIN, REGISTER, REGISTER_CONFIRM, CHANGE_PASSWORD
     }
 
-    private record Mode(String id, String label, String host, int port, Material icon) {
+    private record Menu(Inventory inventory, List<LobbyApi.Mode> modes, int page) {
     }
 }

@@ -9,6 +9,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -51,6 +52,12 @@ final class LobbyApi {
         return post("session", body);
     }
 
+    CompletableFuture<Response> modes(Player player, String session){
+        Map<String, String> body = playerInput(player);
+        body.put("session", session);
+        return post("modes", body);
+    }
+
     CompletableFuture<Response> ticket(Player player, String session, String destination){
         Map<String, String> body = playerInput(player);
         body.put("session", session);
@@ -79,6 +86,11 @@ final class LobbyApi {
                 .thenApply(http -> GSON.fromJson(http.body(), Response.class));
     }
 
-    record Response(String session, String ticket, String error, boolean authenticated) {
+    record Response(String session, String ticket, String error, boolean authenticated, List<Mode> modes,
+                    String host, int port) {
+    }
+
+    record Mode(String serverId, String name, String serverName, String environment, boolean online, int onlinePlayers,
+                int maxPlayers, boolean onlinePlayersKnown, boolean canJoin) {
     }
 }
