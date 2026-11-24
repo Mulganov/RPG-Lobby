@@ -86,7 +86,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         Session session = new Session();
         sessions.put(player.getUniqueId(), session);
         player.setGameMode(GameMode.ADVENTURE);
-        player.teleport(spawn());
+        onPlayer(player, session, () -> player.teleport(spawn()));
 
         session.busy = true;
         player.retrieveCookie(SESSION_COOKIE).orTimeout(3, TimeUnit.SECONDS).whenComplete((cookie, failure) ->
