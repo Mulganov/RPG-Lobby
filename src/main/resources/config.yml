@@ -1,0 +1,11 @@
+modes:
+  buildborn-main:
+    label: BuildBorn
+    host: ''
+    port: 25565
+    icon: IRON_SWORD
+  skywars-main:
+    label: SkyWars RPG
+    host: ''
+    port: 25565
+    icon: FEATHER
