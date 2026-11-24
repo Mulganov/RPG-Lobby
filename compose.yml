@@ -21,9 +21,7 @@ services:
       LEVEL: world
       COPY_CONFIG_DEST: /data
       SYNC_SKIP_NEWER_IN_DESTINATION: "FALSE"
-      CUSTOM_SERVER_PROPERTIES: |-
-        accept-transfers=true
-        accepts-transfers=true
+      ACCEPTS_TRANSFERS: "TRUE"
       LOBBY_CLOUD_URL: "${LOBBY_CLOUD_URL:?Укажите HTTPS-адрес Cloud}"
       LOBBY_SERVER_ID: "${LOBBY_SERVER_ID:-lobby-main}"
       LOBBY_CLOUD_TOKEN: "${LOBBY_CLOUD_TOKEN:?Укажите токен лобби}"
