@@ -1,0 +1,12 @@
+name: RPG-Lobby
+version: '0.1.0'
+main: com.mgames.minecraft.rpg.lobby.LobbyPlugin
+api-version: '26.2'
+load: STARTUP
+commands:
+  login:
+    description: Войти в аккаунт
+  register:
+    description: Создать аккаунт
+  modes:
+    description: Показать игровые режимы

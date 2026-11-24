@@ -1,0 +1,29 @@
+services:
+  lobby:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${LOBBY_BIND_PORT:-25565}:25565"
+    environment:
+      EULA: "${EULA:-FALSE}"
+      TYPE: PAPER
+      VERSION: "26.2"
+      PAPER_BUILD: "135"
+      MEMORY: "${LOBBY_MEMORY:-1G}"
+      ONLINE_MODE: "FALSE"
+      ENFORCE_SECURE_PROFILE: "FALSE"
+      ENABLE_RCON: "FALSE"
+      ALLOW_NETHER: "FALSE"
+      GENERATE_STRUCTURES: "FALSE"
+      VIEW_DISTANCE: "3"
+      SIMULATION_DISTANCE: "3"
+      MAX_PLAYERS: "40"
+      LEVEL: world
+      COPY_CONFIG_DEST: /data
+      SYNC_SKIP_NEWER_IN_DESTINATION: "FALSE"
+      ACCEPTS_TRANSFERS: "TRUE"
+      LOBBY_CLOUD_URL: "${LOBBY_CLOUD_URL:?Укажите HTTPS-адрес Cloud}"
+      LOBBY_SERVER_ID: "${LOBBY_SERVER_ID:-lobby-main}"
+      LOBBY_CLOUD_TOKEN: "${LOBBY_CLOUD_TOKEN:?Укажите токен лобби}"
+    volumes:
+      - "${LOBBY_DATA_DIR:-./data}:/data"
