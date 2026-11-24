@@ -21,3 +21,4 @@ jobs:
         with:
           gradle-version: '9.4.1'
       - run: gradle --no-daemon build
+      - run: docker build --tag rpg-lobby:ci .
