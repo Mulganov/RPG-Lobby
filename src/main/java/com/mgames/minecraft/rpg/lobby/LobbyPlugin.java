@@ -25,8 +25,10 @@ import org.bukkit.event.server.ServerLoadEvent;
 import org.bukkit.generator.ChunkGenerator;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -41,6 +43,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
 
     private static final NamespacedKey SESSION_COOKIE = new NamespacedKey("rpg_lobby", "session");
     private static final NamespacedKey TICKET_COOKIE = new NamespacedKey("rpg_lobby", "ticket");
+    private static final NamespacedKey TRUSTED_LOGIN = new NamespacedKey("rpg_lobby", "trusted_login");
     private static final int SPAWN_Y = 65;
     private static final int MAX_MENU_SIZE = 54;
     private static final int PAGE_SIZE = 45;
@@ -89,13 +92,19 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         session.busy = true;
         player.retrieveCookie(SESSION_COOKIE).orTimeout(3, TimeUnit.SECONDS).whenComplete((cookie, failure) ->
                 onPlayer(player, session, () -> {
-                    if (failure != null || cookie == null || cookie.length != 43){
+                    String token;
+                    if (failure == null && cookie != null && cookie.length == 43){
+                        token = new String(cookie, StandardCharsets.US_ASCII);
+                    }else{
+                        token = rememberedToken(player);
+                    }
+
+                    if (token == null){
                         session.busy = false;
                         promptLogin(player);
                         return;
                     }
 
-                    String token = new String(cookie, StandardCharsets.US_ASCII);
                     complete(player, session, api.session(player, token), response -> {
                         if (response != null && response.authenticated()){
                             openAuthenticated(player, session, token);
@@ -252,6 +261,13 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
                 currentPassword, input == Input.CHANGE_PASSWORD ? text : null);
         complete(player, session, request, response -> {
             if (response != null && response.session() != null){
+                String address = remoteAddress(player);
+                if (address != null){
+                    player.getPersistentDataContainer().set(TRUSTED_LOGIN, PersistentDataType.STRING,
+                            address + "|" + response.session());
+                }else{
+                    player.getPersistentDataContainer().remove(TRUSTED_LOGIN);
+                }
                 openAuthenticated(player, session, response.session());
                 return;
             }
@@ -287,6 +303,23 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
                 action.run();
             }
         });
+    }
+
+    private String remoteAddress(Player player){
+        InetSocketAddress remote = player.getAddress();
+        if (remote == null || remote.getAddress() == null){
+            return null;
+        }
+        return remote.getAddress().getHostAddress();
+    }
+
+    private String rememberedToken(Player player){
+        String address = remoteAddress(player);
+        String saved = player.getPersistentDataContainer().get(TRUSTED_LOGIN, PersistentDataType.STRING);
+        if (address == null || saved == null || !saved.startsWith(address + "|")){
+            return null;
+        }
+        return saved.substring(address.length() + 1);
     }
 
     private void openAuthenticated(Player player, Session session, String token){
