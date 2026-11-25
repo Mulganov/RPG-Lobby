@@ -10,20 +10,31 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
+import org.bukkit.block.Sign;
+import org.bukkit.block.data.Rotatable;
+import org.bukkit.block.sign.Side;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.player.PlayerDropItemEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.server.ServerLoadEvent;
 import org.bukkit.generator.ChunkGenerator;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -44,6 +55,8 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
     private static final NamespacedKey SESSION_COOKIE = new NamespacedKey("rpg_lobby", "session");
     private static final NamespacedKey TICKET_COOKIE = new NamespacedKey("rpg_lobby", "ticket");
     private static final NamespacedKey TRUSTED_LOGIN = new NamespacedKey("rpg_lobby", "trusted_login");
+    private static final NamespacedKey MODES_SELECTOR = new NamespacedKey("rpg_lobby", "modes_selector");
+    private static final int PLATFORM_RADIUS = 16;
     private static final int SPAWN_Y = 65;
     private static final int MAX_MENU_SIZE = 54;
     private static final int PAGE_SIZE = 45;
@@ -93,11 +106,26 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
     @EventHandler
     public void onServerLoad(ServerLoadEvent event){
         World world = Bukkit.getWorlds().getFirst();
-        for (int x = -5; x <= 5; x++){
-            for (int z = -5; z <= 5; z++){
-                Material block = Math.abs(x) == 5 || Math.abs(z) == 5 ? Material.SEA_LANTERN : Material.SMOOTH_STONE;
+        for (int x = -PLATFORM_RADIUS; x <= PLATFORM_RADIUS; x++){
+            for (int z = -PLATFORM_RADIUS; z <= PLATFORM_RADIUS; z++){
+                Material block = Math.max(Math.abs(x), Math.abs(z)) == PLATFORM_RADIUS ? Material.SEA_LANTERN : Material.SMOOTH_STONE;
                 world.getBlockAt(x, SPAWN_Y - 1, z).setType(block, false);
             }
+        }
+        for (BlockFace side: List.of(BlockFace.NORTH, BlockFace.SOUTH, BlockFace.WEST, BlockFace.EAST)){
+            Block block = world.getBlockAt(side.getModX() * 5, SPAWN_Y, side.getModZ() * 5);
+            block.setType(Material.OAK_SIGN, false);
+            Rotatable rotation = (Rotatable) block.getBlockData();
+            rotation.setRotation(side.getOppositeFace());
+            block.setBlockData(rotation, false);
+            Sign sign = (Sign) block.getState();
+            for (Side face: Side.values()){
+                sign.getSide(face).line(1, Component.text("Выбор режима"));
+                sign.getSide(face).line(2, Component.text("Нажми ПКМ"));
+            }
+            sign.getPersistentDataContainer().set(MODES_SELECTOR, PersistentDataType.BYTE, (byte) 1);
+            sign.setWaxed(true);
+            sign.update();
         }
         world.setSpawnLocation(0, SPAWN_Y, 0);
     }
@@ -108,6 +136,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         Session session = new Session();
         sessions.put(player.getUniqueId(), session);
         player.setGameMode(GameMode.ADVENTURE);
+        giveCompass(player);
         onPlayer(player, session, () -> player.teleport(spawn()));
 
         session.busy = true;
@@ -156,24 +185,103 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         }
     }
 
+    private boolean isModesCompass(ItemStack item){
+        return item != null && item.getType() == Material.COMPASS
+                && item.getItemMeta().getPersistentDataContainer().has(MODES_SELECTOR, PersistentDataType.BYTE);
+    }
+
+    private void giveCompass(Player player){
+        PlayerInventory inventory = player.getInventory();
+        if (isModesCompass(inventory.getItemInOffHand())){
+            return;
+        }
+        int slot = inventory.getHeldItemSlot();
+        ItemStack[] storage = inventory.getStorageContents();
+        for (int i = 0; i < storage.length; i++){
+            if (isModesCompass(storage[i])){
+                ItemStack compass = inventory.getItem(i);
+                inventory.setItem(i, inventory.getItem(slot));
+                inventory.setItem(slot, compass);
+                return;
+            }
+        }
+        ItemStack held = inventory.getItem(slot);
+        if (held != null && !held.getType().isAir()){
+            int empty = inventory.firstEmpty();
+            if (empty < 0){
+                return;
+            }
+            inventory.setItem(empty, held);
+        }
+        ItemStack compass = new ItemStack(Material.COMPASS);
+        compass.editMeta(meta -> {
+            meta.displayName(Component.text("Выбор режима · ПКМ", NamedTextColor.AQUA));
+            meta.getPersistentDataContainer().set(MODES_SELECTOR, PersistentDataType.BYTE, (byte) 1);
+        });
+        inventory.setItem(slot, compass);
+    }
+
+    @EventHandler
+    public void onSelectorUse(PlayerInteractEvent event){
+        if (event.getAction() != Action.RIGHT_CLICK_AIR && event.getAction() != Action.RIGHT_CLICK_BLOCK){
+            return;
+        }
+        Block block = event.getClickedBlock();
+        boolean menuSign = block != null && block.getState() instanceof Sign sign
+                && sign.getPersistentDataContainer().has(MODES_SELECTOR, PersistentDataType.BYTE);
+        if (!menuSign && !isModesCompass(event.getItem())){
+            return;
+        }
+        event.setCancelled(true);
+        if (menuSign && event.getHand() != EquipmentSlot.HAND){
+            return;
+        }
+        Player player = event.getPlayer();
+        requestModes(player);
+    }
+
+    @EventHandler
+    public void onCompassDrop(PlayerDropItemEvent event){
+        if (isModesCompass(event.getItemDrop().getItemStack())){
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onMenuClose(InventoryCloseEvent event){
+        Session session = sessions.get(event.getPlayer().getUniqueId());
+        if (session != null && session.menu != null && session.menu.inventory() == event.getInventory()){
+            session.menu = null;
+            if (event.getReason() == InventoryCloseEvent.Reason.PLAYER){
+                event.getPlayer().sendMessage("Выбор режима: нажми ПКМ компасом или по табличке. Команда: /modes.");
+            }
+        }
+    }
+
+    private void requestModes(Player player){
+        Session session = sessions.get(player.getUniqueId());
+        if (session == null || session.busy){
+            player.sendMessage("Подожди, проверяем аккаунт.");
+        }else if (session.token == null){
+            promptLogin(player, session);
+        }else{
+            openModes(player, session);
+        }
+    }
+
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args){
         if (!(sender instanceof Player player)){
             return true;
         }
 
+        if (command.getName().equals("modes")){
+            requestModes(player);
+            return true;
+        }
         Session session = sessions.get(player.getUniqueId());
         if (session == null || session.busy){
             player.sendMessage("Подожди, проверяем аккаунт.");
-            return true;
-        }
-
-        if (command.getName().equals("modes")){
-            if (session.token == null){
-                promptLogin(player, session);
-            }else{
-                openModes(player, session);
-            }
             return true;
         }
         if (args.length != 0){
