@@ -122,7 +122,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
 
                     if (token == null){
                         session.busy = false;
-                        promptLogin(player);
+                        promptLogin(player, session);
                         return;
                     }
 
@@ -130,7 +130,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
                         if (response != null && response.authenticated()){
                             openAuthenticated(player, session, token);
                         }else{
-                            promptLogin(player);
+                            promptLogin(player, session);
                         }
                     });
                 }));
@@ -170,7 +170,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
 
         if (command.getName().equals("modes")){
             if (session.token == null){
-                promptLogin(player);
+                promptLogin(player, session);
             }else{
                 openModes(player, session);
             }
@@ -182,6 +182,13 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         }
         if (session.token != null){
             openModes(player, session);
+            return true;
+        }
+
+        if (session.registered == null || session.registered == command.getName().equals("register")){
+            session.password = null;
+            session.input = Input.NONE;
+            promptLogin(player, session);
             return true;
         }
 
@@ -225,6 +232,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
 
         LobbyApi.Mode mode = menu.modes().get(index);
         if (!mode.canJoin()){
+            player.sendMessage(Component.text(unavailableReason(mode), NamedTextColor.RED));
             return;
         }
 
@@ -236,7 +244,11 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
             }else if (response != null && "invalid_session".equals(response.error())){
                 endSession(player, session);
             }else{
-                player.sendMessage("Сейчас не удалось войти в " + mode.name() + ".");
+                if (response != null && "forbidden".equals(response.error())){
+                    player.sendMessage(Component.text("Нет прав для входа на этот сервер.", NamedTextColor.RED));
+                }else{
+                    player.sendMessage("Сейчас не удалось войти в " + mode.name() + ".");
+                }
                 if (player.getOpenInventory().getTopInventory() == menu.inventory()){
                     openModes(player, session);
                 }
@@ -302,6 +314,11 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
                 player.sendMessage("Слишком много попыток. Попробуй снова через минуту.");
                 return;
             }
+            if (response != null && "account_exists".equals(response.error())){
+                session.registered = true;
+                promptLogin(player, session);
+                return;
+            }
             player.sendMessage("Войти не удалось. Проверь пароль или попробуй позже.");
         });
     }
@@ -344,6 +361,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
     }
 
     private void openAuthenticated(Player player, Session session, String token){
+        session.registered = true;
         session.token = token;
         player.storeCookie(SESSION_COOKIE, token.getBytes(StandardCharsets.US_ASCII));
         openModes(player, session);
@@ -424,11 +442,12 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
             lore.add(Component.text("Онлайн", NamedTextColor.GREEN));
         }
 
-        if (mode.online() && !mode.canJoin()){
-            lore.add(Component.text("Вход недоступен", NamedTextColor.GRAY));
+        if (mode.permissionDenied() || (mode.online() && !mode.canJoin())){
+            lore.add(Component.text(unavailableReason(mode), NamedTextColor.RED));
         }
 
-        ItemStack icon = new ItemStack(mode.canJoin() ? Material.COMPASS : Material.GRAY_DYE);
+        ItemStack icon = new ItemStack(mode.permissionDenied() ? Material.BARRIER
+                : mode.canJoin() ? Material.COMPASS : Material.GRAY_DYE);
         icon.editMeta(meta -> {
             meta.displayName(Component.text(mode.name()));
             meta.lore(lore);
@@ -436,10 +455,17 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         return icon;
     }
 
+    private String unavailableReason(LobbyApi.Mode mode){
+        if (mode.permissionDenied()){
+            return "Нет прав для входа на этот сервер.";
+        }
+        return mode.online() ? "Вход временно недоступен." : "Сервер офлайн.";
+    }
+
     private void endSession(Player player, Session session){
         closeModes(player, session);
         session.token = null;
-        promptLogin(player);
+        promptLogin(player, session);
     }
 
     private void closeModes(Player player, Session session){
@@ -454,8 +480,20 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         return new Location(Bukkit.getWorlds().getFirst(), 0.5, SPAWN_Y, 0.5);
     }
 
-    private void promptLogin(Player player){
-        player.sendMessage("Используй /login для входа или /register для создания аккаунта.");
+    private void promptLogin(Player player, Session session){
+        if (session.registered == null){
+            complete(player, session, api.account(player), response -> {
+                if (response == null || response.registered() == null){
+                    player.sendMessage("Не удалось проверить аккаунт. Повтори /modes чуть позже.");
+                    return;
+                }
+                session.registered = response.registered();
+                promptLogin(player, session);
+            });
+            return;
+        }
+        player.sendMessage(session.registered ? "Этот ник зарегистрирован. Для входа введи /login."
+                : "Добро пожаловать! Для регистрации введи /register.");
     }
 
     private static class Session {
@@ -464,6 +502,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         private String token;
         private String password;
         private Input input = Input.NONE;
+        private Boolean registered;
         private boolean busy;
         private Menu menu;
     }

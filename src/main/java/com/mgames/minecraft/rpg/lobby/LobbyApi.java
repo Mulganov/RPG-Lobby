@@ -37,6 +37,10 @@ final class LobbyApi {
         }
     }
 
+    CompletableFuture<Response> account(Player player){
+        return post("account", playerInput(player));
+    }
+
     CompletableFuture<Response> password(Player player, boolean register, String password, String newPassword){
         Map<String, String> body = playerInput(player);
         body.put("password", password);
@@ -98,11 +102,11 @@ final class LobbyApi {
         return client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
     }
 
-    record Response(String session, String ticket, String error, boolean authenticated, List<Mode> modes,
+    record Response(String session, String ticket, String error, boolean authenticated, Boolean registered, List<Mode> modes,
                     String host, int port) {
     }
 
     record Mode(String serverId, String name, String serverName, String environment, boolean online, int onlinePlayers,
-                int maxPlayers, boolean onlinePlayersKnown, boolean canJoin) {
+                int maxPlayers, boolean onlinePlayersKnown, boolean permissionDenied, boolean canJoin) {
     }
 }
