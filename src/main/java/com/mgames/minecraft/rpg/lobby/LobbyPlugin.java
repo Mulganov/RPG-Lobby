@@ -49,6 +49,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
     private static final int PAGE_SIZE = 45;
 
     private final Map<UUID, Session> sessions = new HashMap<>();
+    private final long startedAt = System.currentTimeMillis();
     private LobbyApi api;
 
     @Override
@@ -61,6 +62,26 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
             return;
         }
         Bukkit.getPluginManager().registerEvents(this, this);
+        Bukkit.getScheduler().runTaskTimer(this, this::reportAnalytics, 1L, 20L * 15);
+    }
+
+    private void reportAnalytics(){
+        List<Map<String, Object>> players = new ArrayList<>();
+        for (Player player: Bukkit.getOnlinePlayers()){
+            Session session = sessions.get(player.getUniqueId());
+            if (session != null){
+                players.add(Map.of("sessionId", session.analyticsId, "joinedAt", session.joinedAt,
+                        "uuid", player.getUniqueId().toString(), "name", player.getName()));
+            }
+        }
+
+        api.snapshot(Map.of("mode", "lobby", "serverName", "Лобби", "startedAt", startedAt,
+                "capturedAt", System.currentTimeMillis(), "maxPlayers", Bukkit.getMaxPlayers(),
+                "minecraftVersion", Bukkit.getMinecraftVersion(), "pluginVersion", getPluginMeta().getVersion(),
+                "players", players)).exceptionally(failure -> {
+            getLogger().warning("Не удалось отправить аналитику лобби: " + failure.getMessage());
+            return null;
+        });
     }
 
     @Override
@@ -438,6 +459,8 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
     }
 
     private static class Session {
+        private final String analyticsId = UUID.randomUUID().toString();
+        private final long joinedAt = System.currentTimeMillis();
         private String token;
         private String password;
         private Input input = Input.NONE;

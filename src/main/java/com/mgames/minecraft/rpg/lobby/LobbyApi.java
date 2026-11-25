@@ -72,7 +72,20 @@ final class LobbyApi {
         return body;
     }
 
+    CompletableFuture<Void> snapshot(Map<String, Object> snapshot){
+        return send("analytics", snapshot).thenApply(response -> {
+            if (response.statusCode() != 200){
+                throw new IllegalStateException("HTTP " + response.statusCode());
+            }
+            return null;
+        });
+    }
+
     private CompletableFuture<Response> post(String endpoint, Map<String, String> body){
+        return send(endpoint, body).thenApply(http -> GSON.fromJson(http.body(), Response.class));
+    }
+
+    private CompletableFuture<HttpResponse<String>> send(String endpoint, Map<String, ?> body){
         HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/api/v1/game/lobby/" + endpoint))
                 .timeout(Duration.ofSeconds(5))
                 .header("Content-Type", "application/json")
@@ -82,8 +95,7 @@ final class LobbyApi {
                 .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body)))
                 .build();
 
-        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenApply(http -> GSON.fromJson(http.body(), Response.class));
+        return client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
     }
 
     record Response(String session, String ticket, String error, boolean authenticated, List<Mode> modes,
