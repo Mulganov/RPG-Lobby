@@ -69,6 +69,15 @@ final class LobbyApi {
         return post("tickets", body);
     }
 
+    CompletableFuture<Response> changeRole(Player player, String session, String action, String role, String target){
+        Map<String, String> body = playerInput(player);
+        body.put("session", session);
+        body.put("action", action);
+        body.put("role", role);
+        body.put("target", target);
+        return post("roles", body);
+    }
+
     private Map<String, String> playerInput(Player player){
         Map<String, String> body = new HashMap<>();
         body.put("name", player.getName());
@@ -103,7 +112,7 @@ final class LobbyApi {
     }
 
     record Response(String session, String ticket, String error, boolean authenticated, Boolean registered, List<Mode> modes,
-                    String host, int port) {
+                    String host, int port, boolean ok) {
     }
 
     record Mode(String serverId, String name, String serverName, String environment, boolean online, int onlinePlayers,

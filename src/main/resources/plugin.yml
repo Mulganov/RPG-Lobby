@@ -10,3 +10,6 @@ commands:
     description: Создать аккаунт
   modes:
     description: Показать игровые режимы
+  player:
+    description: Управлять ролями тестеров
+    usage: /player role <add|remove> <роль> <ник>

@@ -22,6 +22,8 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.FoodLevelChangeEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
@@ -44,6 +46,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -136,6 +139,7 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         Session session = new Session();
         sessions.put(player.getUniqueId(), session);
         player.setGameMode(GameMode.ADVENTURE);
+        player.setFoodLevel(20);
         giveCompass(player);
         onPlayer(player, session, () -> player.teleport(spawn()));
 
@@ -182,6 +186,20 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
     public void onMove(PlayerMoveEvent event){
         if (event.getTo() != null && event.getTo().getY() < SPAWN_Y - 4){
             event.setTo(spawn());
+        }
+    }
+
+    @EventHandler
+    public void onFoodLevelChange(FoodLevelChangeEvent event){
+        if (event.getEntity() instanceof Player player && event.getFoodLevel() < player.getFoodLevel()){
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onDamage(EntityDamageEvent event){
+        if (event.getEntity() instanceof Player){
+            event.setCancelled(true);
         }
     }
 
@@ -284,6 +302,10 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
             player.sendMessage("Подожди, проверяем аккаунт.");
             return true;
         }
+        if (command.getName().equals("player")){
+            changeRole(player, session, args);
+            return true;
+        }
         if (args.length != 0){
             player.sendMessage("Используй команду без пароля. Пароль вводится следующим сообщением.");
             return true;
@@ -304,6 +326,48 @@ public class LobbyPlugin extends JavaPlugin implements Listener {
         session.input = command.getName().equals("register") ? Input.REGISTER : Input.LOGIN;
         player.sendMessage("Введи пароль в чат. Сообщение увидит только плагин входа.");
         return true;
+    }
+
+    private void changeRole(Player player, Session session, String[] args){
+        if (session.token == null){
+            promptLogin(player, session);
+            return;
+        }
+
+        if (args.length != 4 || !args[0].equalsIgnoreCase("role")
+                || (!args[1].equalsIgnoreCase("add") && !args[1].equalsIgnoreCase("remove"))){
+            player.sendMessage("Используй /player role <add|remove> <роль> <ник>.");
+            return;
+        }
+
+        String action = args[1].toLowerCase(Locale.ROOT);
+        String role = args[2].toUpperCase(Locale.ROOT);
+        String target = args[3];
+
+        complete(player, session, api.changeRole(player, session.token, action, role, target), response -> {
+            if (response != null && response.ok()){
+                String message = action.equals("add")
+                        ? "Игроку " + target + " выдана роль " + role + "."
+                        : "У игрока " + target + " снята роль " + role + ", выданная через лобби.";
+                player.sendMessage(Component.text(message, NamedTextColor.GREEN));
+                return;
+            }
+
+            String error = response == null ? null : response.error();
+            if ("invalid_session".equals(error)){
+                endSession(player, session);
+                return;
+            }
+
+            String message = switch (error){
+                case "forbidden" -> "Роли может менять только администратор.";
+                case "account_not_found" -> "Игрок " + target + " ещё не зарегистрирован.";
+                case "invalid_role" -> "В лобби доступны роли ALPHA_TEST и BETA_TESTER.";
+                case "invalid_player" -> "Проверь ник игрока.";
+                case null, default -> "Не удалось изменить роль. Попробуй позже.";
+            };
+            player.sendMessage(Component.text(message, NamedTextColor.RED));
+        });
     }
 
     @EventHandler
